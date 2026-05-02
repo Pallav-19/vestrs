@@ -1,0 +1,184 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum OnboardingStep {
+  REGISTERED
+  KYC_INITIATED
+  KYC_FAILED
+  KYC_SUCCESS
+  ACCRED_INITIATED
+  ACCRED_FAILED
+  ACCRED_SUCCESS
+  BANK_LINKED
+  COMPLETE
+}
+
+enum CheckStatus {
+  PENDING
+  SUCCESS
+  FAILURE
+}
+
+enum AccountType {
+  CHECKING
+  SAVINGS
+}
+
+enum BankAccountStatus {
+  ACTIVE
+  UNLINKED
+}
+
+enum InvestmentStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum AuditAction {
+  USER_REGISTERED
+  KYC_INITIATED
+  KYC_POLL_ATTEMPTED
+  KYC_COMPLETED
+  ACCRED_INITIATED
+  ACCRED_POLL_ATTEMPTED
+  ACCRED_COMPLETED
+  BANK_LINK_INITIATED
+  BANK_LINK_COMPLETED
+  INVESTMENT_INITIATED
+  INVESTMENT_COMPLETED
+}
+
+enum AuditStatus {
+  SUCCESS
+  FAILURE
+  PENDING
+}
+
+// ─── Models ──────────────────────────────────────────────────────────────────
+
+model User {
+  id             String         @id @default(uuid())
+  name           String         @db.VarChar(100)
+  email          String         @unique @db.VarChar(255)
+  phone          String         @db.VarChar(20)
+  passwordHash   String
+  nationality    String         @db.Char(2)
+  domicile       String         @db.Char(2)
+  onboardingStep OnboardingStep @default(REGISTERED)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  kycChecks    KycCheck[]
+  accredChecks AccredCheck[]
+  bankAccounts BankAccount[]
+  investments  Investment[]
+  auditLogs    AuditLog[]
+
+  @@map("users")
+}
+
+model KycCheck {
+  id              String      @id @default(uuid())
+  userId          String
+  provider        String
+  refId           String
+  status          CheckStatus @default(PENDING)
+  attemptNumber   Int         @default(1)
+  responsePayload Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([refId])
+  @@map("kyc_checks")
+}
+
+model AccredCheck {
+  id              String      @id @default(uuid())
+  userId          String
+  provider        String
+  refId           String
+  status          CheckStatus @default(PENDING)
+  attemptNumber   Int         @default(1)
+  responsePayload Json?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([userId, status])
+  @@index([refId])
+  @@map("accred_checks")
+}
+
+model BankAccount {
+  id                String            @id @default(uuid())
+  userId            String
+  provider          String
+  providerAccountId String
+  maskedNumber      String            @db.VarChar(10)
+  bankName          String            @db.VarChar(100)
+  accountType       AccountType
+  balance           Decimal           @db.Decimal(18, 2)
+  currency          String            @default("USD") @db.Char(3)
+  status            BankAccountStatus @default(ACTIVE)
+  linkedAt          DateTime?
+  createdAt         DateTime          @default(now())
+
+  user        User         @relation(fields: [userId], references: [id])
+  investments Investment[]
+
+  @@index([userId])
+  @@index([userId, status])
+  @@map("bank_accounts")
+}
+
+model Investment {
+  id                 String           @id @default(uuid())
+  userId             String
+  bankAccountId      String
+  amount             Decimal          @db.Decimal(18, 2)
+  currency           String           @default("USD") @db.Char(3)
+  destinationAccount String
+  txRef              String           @unique
+  status             InvestmentStatus @default(COMPLETED)
+  createdAt          DateTime         @default(now())
+
+  user        User        @relation(fields: [userId], references: [id])
+  bankAccount BankAccount @relation(fields: [bankAccountId], references: [id])
+
+  @@index([userId])
+  @@index([txRef])
+  @@index([bankAccountId])
+  @@map("investments")
+}
+
+model AuditLog {
+  id        String      @id @default(uuid())
+  userId    String?
+  action    AuditAction
+  status    AuditStatus
+  metadata  Json?
+  ipAddress String?
+  createdAt DateTime    @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
