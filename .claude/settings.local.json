@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm --version)",
+      "Bash(npx @nestjs/cli --version)",
+      "Bash(nest --version)",
+      "Bash(npm run *)"
+    ]
+  }
+}
