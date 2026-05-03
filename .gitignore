@@ -27,6 +27,5 @@ npm-debug.log*
 Thumbs.db
 
 # Prisma
-/prisma/migrations/*.sql
 Assignment.pdf
 frontend-brief.md

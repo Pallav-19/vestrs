@@ -22,6 +22,9 @@ async function bootstrap() {
 
   app.enableCors();
 
+  // Health check — outside api/v1 prefix so Railway can reach it without auth
+  app.getHttpAdapter().get('/health', (_req, res) => res.json({ status: 'ok' }));
+
   const swaggerConfig = new DocumentBuilder()
     .setTitle('Investment Onboarding API')
     .setDescription('Cross-border investment onboarding platform — auth, KYC, accreditation, bank linking, investments')
