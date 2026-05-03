@@ -19,6 +19,7 @@ import { ThirdPartyModule } from './third-party/third-party.module';
       load: [configuration],
       validationSchema: Joi.object({
         DATABASE_URL: Joi.string().required(),
+        REDIS_URL: Joi.string().optional(),
         REDIS_HOST: Joi.string().default('localhost'),
         REDIS_PORT: Joi.number().default(6379),
         JWT_ACCESS_SECRET: Joi.string().min(32).required(),
@@ -33,12 +34,17 @@ import { ThirdPartyModule } from './third-party/third-party.module';
     }),
     BullModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        connection: {
-          host: config.get<string>('app.redis.host'),
-          port: config.get<number>('app.redis.port'),
-        },
-      }),
+      useFactory: (config: ConfigService) => {
+        const redisUrl = config.get<string>('app.redis.url');
+        return {
+          connection: redisUrl
+            ? { url: redisUrl }
+            : {
+                host: config.get<string>('app.redis.host'),
+                port: config.get<number>('app.redis.port'),
+              },
+        };
+      },
     }),
     PrismaModule,
     ThirdPartyModule,
