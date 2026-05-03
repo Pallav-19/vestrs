@@ -1,3 +1,5 @@
+import { ProviderStatus } from '../../../common/enums';
+
 export interface AccreditationPayload {
   userId: string;
   name: string;
@@ -6,7 +8,7 @@ export interface AccreditationPayload {
 
 export interface AccreditationResponse {
   refId: string;
-  status: 'success' | 'failure' | 'pending';
+  status: ProviderStatus;
   provider: string;
   accreditationType?: 'income' | 'net_worth' | 'professional';
   reason?: string;

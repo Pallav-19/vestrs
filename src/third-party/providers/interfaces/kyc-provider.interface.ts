@@ -1,3 +1,5 @@
+import { ProviderStatus } from '../../../common/enums';
+
 export interface KycProviderPayload {
   userId: string;
   name: string;
@@ -8,7 +10,7 @@ export interface KycProviderPayload {
 
 export interface KycProviderResponse {
   refId: string;
-  status: 'success' | 'failure' | 'pending';
+  status: ProviderStatus;
   provider: string;
   reason?: string;
   extra?: Record<string, unknown>;

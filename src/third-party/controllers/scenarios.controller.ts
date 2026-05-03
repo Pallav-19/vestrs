@@ -5,38 +5,32 @@ import {
   Get,
   Param,
   Body,
-  ForbiddenException,
 } from '@nestjs/common';
 import { ScenarioStoreService, ScenarioProvider } from '../scenarios/scenario-store.service';
 import { SetScenarioDto } from '../dto/set-scenario.dto';
+import { assertNonProd } from '../utils/non-prod.guard';
 
-@Controller('mock/scenarios')
-export class MockScenariosController {
+@Controller('dev/scenarios')
+export class ScenariosController {
   constructor(private readonly scenarioStore: ScenarioStoreService) {}
-
-  private guardNonProd() {
-    if (process.env.NODE_ENV === 'production') {
-      throw new ForbiddenException('Mock endpoints are not available in production');
-    }
-  }
 
   @Post()
   set(@Body() dto: SetScenarioDto) {
-    this.guardNonProd();
+    assertNonProd();
     this.scenarioStore.set(dto.userId, dto.provider, { outcome: dto.outcome, reason: dto.reason });
     return { success: true, message: `Scenario set: ${dto.userId}:${dto.provider} → ${dto.outcome}` };
   }
 
   @Delete(':userId/:provider')
   delete(@Param('userId') userId: string, @Param('provider') provider: ScenarioProvider) {
-    this.guardNonProd();
+    assertNonProd();
     this.scenarioStore.delete(userId, provider);
     return { success: true, message: `Scenario cleared for ${userId}:${provider}` };
   }
 
   @Get()
   list() {
-    this.guardNonProd();
+    assertNonProd();
     return { success: true, data: this.scenarioStore.list() };
   }
 }

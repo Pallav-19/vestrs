@@ -6,8 +6,8 @@ import {
 import { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { MockBankProvider } from '../../mock/providers/mock-bank.provider';
-import { AuditAction, AuditStatus } from '../../common/enums';
+import { BankProvider } from '../../third-party/providers/bank.provider';
+import { AuditAction, AuditStatus, BankAccountStatus, AccountType } from '../../common/enums';
 import { LinkBankDto } from './dto/link-bank.dto';
 
 @Injectable()
@@ -15,7 +15,7 @@ export class BankService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly bankProvider: MockBankProvider,
+    private readonly bankProvider: BankProvider,
   ) {}
 
   async link(user: User, dto: LinkBankDto, ipAddress?: string) {
@@ -41,7 +41,7 @@ export class BankService {
           providerAccountId: result.providerAccountId,
           maskedNumber: result.maskedNumber,
           bankName: result.bankName,
-          accountType: result.accountType.toUpperCase() as 'CHECKING' | 'SAVINGS',
+          accountType: result.accountType.toUpperCase() as AccountType,
           balance: result.balance,
           currency: result.currency,
           linkedAt: new Date(),
@@ -79,7 +79,7 @@ export class BankService {
 
   async findAll(userId: string) {
     const accounts = await this.prisma.bankAccount.findMany({
-      where: { userId, status: 'ACTIVE' },
+      where: { userId, status: BankAccountStatus.ACTIVE },
       orderBy: { createdAt: 'desc' },
     });
 
@@ -106,7 +106,7 @@ export class BankService {
       });
     }
 
-    if (account.status === 'UNLINKED') {
+    if (account.status === BankAccountStatus.UNLINKED) {
       throw new ConflictException({
         code: 'ACCOUNT_ALREADY_UNLINKED',
         message: 'Bank account is already unlinked',
@@ -115,7 +115,7 @@ export class BankService {
 
     await this.prisma.bankAccount.update({
       where: { id: accountId },
-      data: { status: 'UNLINKED' },
+      data: { status: BankAccountStatus.UNLINKED },
     });
   }
 }

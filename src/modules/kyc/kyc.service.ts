@@ -11,12 +11,13 @@ import { v4 as uuidv4 } from 'uuid';
 import { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AuditAction, AuditStatus } from '../../common/enums';
-import { MockCkycProvider } from '../../mock/providers/mock-ckyc.provider';
-import { MockIdentityProvider } from '../../mock/providers/mock-identity.provider';
-import { MockAmlProvider } from '../../mock/providers/mock-aml.provider';
-import { KycProviderPayload } from '../../mock/providers/interfaces/kyc-provider.interface';
+import { AuditAction, AuditStatus, CheckStatus, OnboardingStep, ProviderStatus } from '../../common/enums';
+import { CkycProvider } from '../../third-party/providers/ckyc.provider';
+import { IdentityProvider } from '../../third-party/providers/identity.provider';
+import { AmlProvider } from '../../third-party/providers/aml.provider';
+import { KycProviderPayload } from '../../third-party/providers/interfaces/kyc-provider.interface';
 import { KycPollJobData, SubResults } from './types';
+import { computeKycComposite, providerToCheckStatus } from './kyc.utils';
 
 const MAX_ATTEMPTS = 3;
 
@@ -25,9 +26,9 @@ export class KycService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly ckyc: MockCkycProvider,
-    private readonly identity: MockIdentityProvider,
-    private readonly aml: MockAmlProvider,
+    private readonly ckyc: CkycProvider,
+    private readonly identity: IdentityProvider,
+    private readonly aml: AmlProvider,
     private readonly config: ConfigService,
     @InjectQueue('kyc-poll') private readonly kycQueue: Queue,
   ) {}
@@ -51,7 +52,7 @@ export class KycService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!latest || latest.status !== 'FAILURE') {
+    if (!latest || latest.status !== CheckStatus.FAILURE) {
       throw new ConflictException({
         code: 'KYC_NOT_FAILED',
         message: 'Latest KYC check is not in a failed state',
@@ -104,11 +105,11 @@ export class KycService {
     // Step 1 — CKYC (synchronous, short-circuits on failure)
     const ckycResult = await this.ckyc.initiate(payload);
 
-    if (ckycResult.status === 'failure') {
+    if (ckycResult.status === ProviderStatus.FAILURE) {
       return this.resolveCheck({
         userId: user.id,
         attemptNumber,
-        compositeStatus: 'FAILURE',
+        compositeStatus: CheckStatus.FAILURE,
         subResults: { ckyc: ckycResult, identity: null, aml: null },
         ipAddress,
       });
@@ -121,8 +122,7 @@ export class KycService {
     ]);
 
     const subResults: SubResults = { ckyc: ckycResult, identity: identityResult, aml: amlResult };
-
-    const compositeStatus = this.computeComposite(identityResult.status, amlResult.status);
+    const compositeStatus = computeKycComposite(identityResult.status, amlResult.status);
 
     return this.resolveCheck({ userId: user.id, attemptNumber, compositeStatus, subResults, ipAddress });
   }
@@ -130,7 +130,7 @@ export class KycService {
   private async resolveCheck(opts: {
     userId: string;
     attemptNumber: number;
-    compositeStatus: 'SUCCESS' | 'FAILURE' | 'PENDING';
+    compositeStatus: CheckStatus;
     subResults: SubResults;
     ipAddress?: string;
   }) {
@@ -147,11 +147,8 @@ export class KycService {
       },
     });
 
-    if (compositeStatus === 'SUCCESS') {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'KYC_SUCCESS' },
-      });
+    if (compositeStatus === CheckStatus.SUCCESS) {
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.KYC_SUCCESS } });
       await this.audit.log({
         userId,
         action: AuditAction.KYC_COMPLETED,
@@ -159,11 +156,8 @@ export class KycService {
         metadata: { checkId: check.id },
         ipAddress,
       });
-    } else if (compositeStatus === 'FAILURE') {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'KYC_FAILED' },
-      });
+    } else if (compositeStatus === CheckStatus.FAILURE) {
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.KYC_FAILED } });
       await this.audit.log({
         userId,
         action: AuditAction.KYC_COMPLETED,
@@ -172,17 +166,10 @@ export class KycService {
         ipAddress,
       });
     } else {
-      // PENDING — set transitional step and enqueue
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'KYC_INITIATED' },
-      });
-
-      const jobData: KycPollJobData = { kycCheckId: check.id, userId, pollCount: 0 };
-      await this.kycQueue.add('poll', jobData, {
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.KYC_INITIATED } });
+      await this.kycQueue.add('poll', { kycCheckId: check.id, userId, pollCount: 0 } satisfies KycPollJobData, {
         delay: this.config.get<number>('app.mock.kycPollDelayMs') ?? 30000,
       });
-
       await this.audit.log({
         userId,
         action: AuditAction.KYC_INITIATED,
@@ -198,24 +185,15 @@ export class KycService {
       attemptNumber: check.attemptNumber,
       subResults,
       message:
-        compositeStatus === 'PENDING'
+        compositeStatus === CheckStatus.PENDING
           ? 'KYC check initiated. Poll /kyc/status for updates.'
           : undefined,
     };
   }
 
-  private computeComposite(
-    identityStatus: string,
-    amlStatus: string,
-  ): 'SUCCESS' | 'FAILURE' | 'PENDING' {
-    if (identityStatus === 'failure' || amlStatus === 'failure') return 'FAILURE';
-    if (identityStatus === 'pending' || amlStatus === 'pending') return 'PENDING';
-    return 'SUCCESS';
-  }
-
   private async assertNoPendingCheck(userId: string) {
     const pending = await this.prisma.kycCheck.findFirst({
-      where: { userId, status: 'PENDING' },
+      where: { userId, status: CheckStatus.PENDING },
     });
     if (pending) {
       throw new ConflictException({

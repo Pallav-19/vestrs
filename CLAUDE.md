@@ -9,7 +9,7 @@ npm run build          # compile TypeScript → dist/
 npm run start:dev      # hot-reload dev server (port 3000)
 npm run start:prod     # run compiled dist/main.js
 npm run lint           # ESLint with auto-fix
-npm run test           # Jest unit tests
+npm run test           # Jest unit tests (47 specs across 5 service suites)
 npm run test:e2e       # E2E tests
 npx prisma migrate dev --name <name>   # create + apply a migration
 npx prisma generate                    # regenerate Prisma client after schema changes
@@ -59,13 +59,14 @@ REGISTERED → KYC_INITIATED|KYC_FAILED|KYC_SUCCESS → ACCRED_INITIATED|ACCRED_
 
 Both use manual re-enqueue (not BullMQ retry) for full control. Check `check.status !== 'PENDING'` before polling to handle webhook-resolved races.
 
-### Mock provider control
+### Third-party provider control (dev only)
 
-Force deterministic outcomes via `POST /api/v1/mock/scenarios`:
+Force deterministic outcomes via `POST /api/v1/dev/scenarios`:
 ```json
 { "userId": "...", "provider": "ckyc|identity|aml|accreditation|bank", "outcome": "success|failure|pending" }
 ```
 ScenarioStoreService is an in-memory Map — clears on restart.
+Webhook simulation: `POST /api/v1/dev/webhooks/kyc/:refId` and `/accreditation/:refId`.
 
 Special bank tokens: `mock-fail-token` → 422, `mock-zero-balance` → $0, `mock-low-balance` → $500.
 

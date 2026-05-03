@@ -4,9 +4,10 @@ import { Job, Queue } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AuditAction, AuditStatus } from '../../common/enums';
-import { MockAccreditationProvider } from '../../mock/providers/mock-accreditation.provider';
+import { AuditAction, AuditStatus, CheckStatus, OnboardingStep, ProviderStatus } from '../../common/enums';
+import { AccreditationProvider } from '../../third-party/providers/accreditation.provider';
 import { AccredPollJobData } from './types';
+import { providerToCheckStatus } from '../kyc/kyc.utils';
 
 const MAX_POLLS = 15;
 
@@ -17,7 +18,7 @@ export class AccreditationProcessor extends WorkerHost {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly accreditationProvider: MockAccreditationProvider,
+    private readonly accreditationProvider: AccreditationProvider,
     private readonly config: ConfigService,
     @InjectQueue('accred-poll') private readonly accredQueue: Queue,
   ) {
@@ -36,7 +37,7 @@ export class AccreditationProcessor extends WorkerHost {
 
     const check = await this.prisma.accredCheck.findUnique({ where: { id: accredCheckId } });
 
-    if (!check || check.status !== 'PENDING') {
+    if (!check || check.status !== CheckStatus.PENDING) {
       this.logger.debug(`Check ${accredCheckId} already resolved — skipping`);
       return;
     }
@@ -50,7 +51,7 @@ export class AccreditationProcessor extends WorkerHost {
       metadata: { checkId: accredCheckId, pollCount: pollCount + 1, providerStatus: result.status },
     });
 
-    if (result.status === 'pending') {
+    if (result.status === ProviderStatus.PENDING) {
       await this.accredQueue.add(
         'poll',
         { accredCheckId, userId, pollCount: pollCount + 1 },
@@ -59,29 +60,22 @@ export class AccreditationProcessor extends WorkerHost {
       return;
     }
 
-    const newStatus = result.status === 'success' ? 'SUCCESS' : 'FAILURE';
-    const nextStep = newStatus === 'SUCCESS' ? 'ACCRED_SUCCESS' : 'ACCRED_FAILED';
+    const newStatus = providerToCheckStatus(result.status);
+    const nextStep = newStatus === CheckStatus.SUCCESS ? OnboardingStep.ACCRED_SUCCESS : OnboardingStep.ACCRED_FAILED;
 
     await this.prisma.$transaction(async (tx) => {
       await tx.accredCheck.update({
         where: { id: accredCheckId },
         data: { status: newStatus, responsePayload: result as any },
       });
-      await tx.user.update({
-        where: { id: userId },
-        data: { onboardingStep: nextStep },
-      });
+      await tx.user.update({ where: { id: userId }, data: { onboardingStep: nextStep } });
     });
 
     await this.audit.log({
       userId,
       action: AuditAction.ACCRED_COMPLETED,
-      status: newStatus === 'SUCCESS' ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
-      metadata: {
-        checkId: accredCheckId,
-        pollCount: pollCount + 1,
-        accreditationType: result.accreditationType,
-      },
+      status: newStatus === CheckStatus.SUCCESS ? AuditStatus.SUCCESS : AuditStatus.FAILURE,
+      metadata: { checkId: accredCheckId, pollCount: pollCount + 1, accreditationType: result.accreditationType },
     });
 
     this.logger.log(`Accreditation check ${accredCheckId} resolved: ${newStatus}`);
@@ -89,8 +83,8 @@ export class AccreditationProcessor extends WorkerHost {
 
   private async forceFailure(accredCheckId: string, userId: string, reason: string) {
     await this.prisma.$transaction(async (tx) => {
-      await tx.accredCheck.update({ where: { id: accredCheckId }, data: { status: 'FAILURE' } });
-      await tx.user.update({ where: { id: userId }, data: { onboardingStep: 'ACCRED_FAILED' } });
+      await tx.accredCheck.update({ where: { id: accredCheckId }, data: { status: CheckStatus.FAILURE } });
+      await tx.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.ACCRED_FAILED } });
     });
     await this.audit.log({
       userId,

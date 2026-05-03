@@ -7,7 +7,7 @@ import { User } from '@prisma/client';
 import { v4 as uuidv4 } from 'uuid';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AuditAction, AuditStatus } from '../../common/enums';
+import { AuditAction, AuditStatus, BankAccountStatus, InvestmentStatus } from '../../common/enums';
 import { CreateInvestmentDto } from './dto/create-investment.dto';
 
 @Injectable()
@@ -19,7 +19,7 @@ export class InvestmentsService {
 
   async create(user: User, dto: CreateInvestmentDto, ipAddress?: string) {
     const account = await this.prisma.bankAccount.findFirst({
-      where: { id: dto.bankAccountId, userId: user.id, status: 'ACTIVE' },
+      where: { id: dto.bankAccountId, userId: user.id, status: BankAccountStatus.ACTIVE },
     });
 
     if (!account) {
@@ -65,7 +65,7 @@ export class InvestmentsService {
           currency: account.currency,
           destinationAccount: dto.destinationAccount,
           txRef,
-          status: 'COMPLETED',
+          status: InvestmentStatus.COMPLETED,
         },
       });
     });

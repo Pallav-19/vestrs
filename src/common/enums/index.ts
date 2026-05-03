@@ -35,3 +35,26 @@ export enum AuditStatus {
   FAILURE = 'FAILURE',
   PENDING = 'PENDING',
 }
+
+export enum BankAccountStatus {
+  ACTIVE = 'ACTIVE',
+  UNLINKED = 'UNLINKED',
+}
+
+export enum InvestmentStatus {
+  PENDING = 'PENDING',
+  COMPLETED = 'COMPLETED',
+  FAILED = 'FAILED',
+}
+
+export enum AccountType {
+  CHECKING = 'CHECKING',
+  SAVINGS = 'SAVINGS',
+}
+
+// Lowercase — matches what third-party providers return
+export enum ProviderStatus {
+  SUCCESS = 'success',
+  FAILURE = 'failure',
+  PENDING = 'pending',
+}

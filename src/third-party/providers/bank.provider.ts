@@ -12,7 +12,7 @@ const MOCK_BANKS = [
 ];
 
 @Injectable()
-export class MockBankProvider implements IBankProvider {
+export class BankProvider implements IBankProvider {
   private readonly balanceStore = new Map<string, number>();
 
   constructor(private readonly scenarioStore: ScenarioStoreService) {}

@@ -11,9 +11,11 @@ import { v4 as uuidv4 } from 'uuid';
 import { User } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../audit/audit.service';
-import { AuditAction, AuditStatus } from '../../common/enums';
-import { MockAccreditationProvider } from '../../mock/providers/mock-accreditation.provider';
+import { AuditAction, AuditStatus, CheckStatus, OnboardingStep, ProviderStatus } from '../../common/enums';
+import { AccreditationProvider } from '../../third-party/providers/accreditation.provider';
+import { AccreditationResponse } from '../../third-party/providers/interfaces/accreditation-provider.interface';
 import { AccredPollJobData } from './types';
+import { providerToCheckStatus } from '../kyc/kyc.utils';
 
 const MAX_ATTEMPTS = 3;
 
@@ -22,7 +24,7 @@ export class AccreditationService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
-    private readonly accreditationProvider: MockAccreditationProvider,
+    private readonly accreditationProvider: AccreditationProvider,
     private readonly config: ConfigService,
     @InjectQueue('accred-poll') private readonly accredQueue: Queue,
   ) {}
@@ -44,14 +46,7 @@ export class AccreditationService {
       nationality: user.nationality,
     });
 
-    return this.resolveCheck({
-      userId: user.id,
-      attemptNumber: attemptCount + 1,
-      status: result.status,
-      refId: result.refId,
-      responsePayload: result,
-      ipAddress,
-    });
+    return this.resolveCheck({ userId: user.id, attemptNumber: attemptCount + 1, result, ipAddress });
   }
 
   async retry(user: User, ipAddress?: string) {
@@ -60,7 +55,7 @@ export class AccreditationService {
       orderBy: { createdAt: 'desc' },
     });
 
-    if (!latest || latest.status !== 'FAILURE') {
+    if (!latest || latest.status !== CheckStatus.FAILURE) {
       throw new ConflictException({
         code: 'ACCRED_NOT_FAILED',
         message: 'Latest accreditation check is not in a failed state',
@@ -81,14 +76,7 @@ export class AccreditationService {
       nationality: user.nationality,
     });
 
-    return this.resolveCheck({
-      userId: user.id,
-      attemptNumber: attemptCount + 1,
-      status: result.status,
-      refId: result.refId,
-      responsePayload: result,
-      ipAddress,
-    });
+    return this.resolveCheck({ userId: user.id, attemptNumber: attemptCount + 1, result, ipAddress });
   }
 
   async getStatus(userId: string) {
@@ -120,61 +108,48 @@ export class AccreditationService {
   private async resolveCheck(opts: {
     userId: string;
     attemptNumber: number;
-    status: 'success' | 'failure' | 'pending';
-    refId: string;
-    responsePayload: Record<string, unknown> | any;
+    result: AccreditationResponse;
     ipAddress?: string;
   }) {
-    const { userId, attemptNumber, status, refId, responsePayload, ipAddress } = opts;
-
-    const prismaStatus = status.toUpperCase() as 'SUCCESS' | 'FAILURE' | 'PENDING';
+    const { userId, attemptNumber, result, ipAddress } = opts;
+    const checkStatus = providerToCheckStatus(result.status);
 
     const check = await this.prisma.accredCheck.create({
       data: {
         userId,
-        provider: responsePayload['provider'] as string,
-        refId: refId || `accred_${uuidv4().slice(0, 8)}`,
-        status: prismaStatus,
+        provider: result.provider,
+        refId: result.refId || `accred_${uuidv4().slice(0, 8)}`,
+        status: checkStatus,
         attemptNumber,
-        responsePayload: responsePayload as any,
+        responsePayload: result as any,
       },
     });
 
-    if (prismaStatus === 'SUCCESS') {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'ACCRED_SUCCESS' },
-      });
+    if (checkStatus === CheckStatus.SUCCESS) {
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.ACCRED_SUCCESS } });
       await this.audit.log({
         userId,
         action: AuditAction.ACCRED_COMPLETED,
         status: AuditStatus.SUCCESS,
-        metadata: { checkId: check.id, accreditationType: responsePayload['accreditationType'] },
+        metadata: { checkId: check.id, accreditationType: result.accreditationType },
         ipAddress,
       });
-    } else if (prismaStatus === 'FAILURE') {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'ACCRED_FAILED' },
-      });
+    } else if (checkStatus === CheckStatus.FAILURE) {
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.ACCRED_FAILED } });
       await this.audit.log({
         userId,
         action: AuditAction.ACCRED_COMPLETED,
         status: AuditStatus.FAILURE,
-        metadata: { checkId: check.id, reason: responsePayload['reason'] },
+        metadata: { checkId: check.id, reason: result.reason },
         ipAddress,
       });
     } else {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { onboardingStep: 'ACCRED_INITIATED' },
-      });
-
-      const jobData: AccredPollJobData = { accredCheckId: check.id, userId, pollCount: 0 };
-      await this.accredQueue.add('poll', jobData, {
-        delay: this.config.get<number>('app.mock.accredPollDelayMs') ?? 30000,
-      });
-
+      await this.prisma.user.update({ where: { id: userId }, data: { onboardingStep: OnboardingStep.ACCRED_INITIATED } });
+      await this.accredQueue.add(
+        'poll',
+        { accredCheckId: check.id, userId, pollCount: 0 } satisfies AccredPollJobData,
+        { delay: this.config.get<number>('app.mock.accredPollDelayMs') ?? 30000 },
+      );
       await this.audit.log({
         userId,
         action: AuditAction.ACCRED_INITIATED,
@@ -186,12 +161,12 @@ export class AccreditationService {
 
     return {
       id: check.id,
-      status,
+      status: result.status,
       attemptNumber: check.attemptNumber,
       provider: check.provider,
-      detail: responsePayload,
+      detail: result,
       message:
-        status === 'pending'
+        result.status === ProviderStatus.PENDING
           ? 'Accreditation check initiated. This may take up to 48 hours. Poll /accreditation/status for updates.'
           : undefined,
     };
@@ -199,7 +174,7 @@ export class AccreditationService {
 
   private async assertNoPendingCheck(userId: string) {
     const pending = await this.prisma.accredCheck.findFirst({
-      where: { userId, status: 'PENDING' },
+      where: { userId, status: CheckStatus.PENDING },
     });
     if (pending) {
       throw new ConflictException({

@@ -10,7 +10,7 @@ import { KycModule } from './modules/kyc/kyc.module';
 import { AccreditationModule } from './modules/accreditation/accreditation.module';
 import { BankModule } from './modules/bank/bank.module';
 import { InvestmentsModule } from './modules/investments/investments.module';
-import { MockModule } from './mock/mock.module';
+import { ThirdPartyModule } from './third-party/third-party.module';
 
 @Module({
   imports: [
@@ -41,7 +41,7 @@ import { MockModule } from './mock/mock.module';
       }),
     }),
     PrismaModule,
-    MockModule,
+    ThirdPartyModule,
     AuditModule,
     AuthModule,
     KycModule,
