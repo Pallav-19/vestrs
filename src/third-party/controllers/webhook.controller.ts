@@ -5,16 +5,22 @@ import {
   Body,
   NotFoundException,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse, ApiParam } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AuditService } from '../../modules/audit/audit.service';
 import { AuditAction, AuditStatus, CheckStatus, OnboardingStep } from '../../common/enums';
 import { assertNonProd } from '../utils/non-prod.guard';
 
 class WebhookDto {
+  @ApiProperty({ enum: ['success', 'failure'] })
   status: 'success' | 'failure';
+
+  @ApiPropertyOptional({ example: 'Simulated AML hit' })
   reason?: string;
 }
 
+@ApiTags('Dev')
 @Controller('dev/webhooks')
 export class WebhookController {
   constructor(
@@ -23,6 +29,10 @@ export class WebhookController {
   ) {}
 
   @Post('kyc/:refId')
+  @ApiOperation({ summary: '[Dev] Simulate KYC webhook resolution' })
+  @ApiParam({ name: 'refId', description: 'KYC check refId from initiate response' })
+  @ApiResponse({ status: 201, description: 'KYC status updated' })
+  @ApiResponse({ status: 404, description: 'KYC check not found' })
   async simulateKycWebhook(@Param('refId') refId: string, @Body() dto: WebhookDto) {
     assertNonProd();
 
@@ -54,6 +64,10 @@ export class WebhookController {
   }
 
   @Post('accreditation/:refId')
+  @ApiOperation({ summary: '[Dev] Simulate accreditation webhook resolution' })
+  @ApiParam({ name: 'refId', description: 'Accreditation check refId from initiate response' })
+  @ApiResponse({ status: 201, description: 'Accreditation status updated' })
+  @ApiResponse({ status: 404, description: 'Accreditation check not found' })
   async simulateAccredWebhook(@Param('refId') refId: string, @Body() dto: WebhookDto) {
     assertNonProd();
 
